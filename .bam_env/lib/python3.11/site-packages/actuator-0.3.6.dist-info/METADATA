@@ -1,0 +1,45 @@
+Metadata-Version: 2.4
+Name: actuator
+Version: 0.3.6
+Summary: Python interface for controlling various robotic actuators
+Home-page: https://github.com/kscalelabs/actuator
+Author: K-Scale Labs
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Provides-Extra: dev
+Requires-Dist: black; extra == "dev"
+Requires-Dist: darglint; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Requires-Dist: python-can; extra == "dev"
+Requires-Dist: pyserial; extra == "dev"
+Dynamic: author
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: license-file
+Dynamic: provides-extra
+Dynamic: requires-python
+Dynamic: summary
+
+# actuator
+
+Defines a package to make it easy and performant to control actuators.
+
+> [!WARNING]
+> The Python bindings for this package are currently in an experimental state and may be unstable or subject to breaking changes.
+
+![System Architecture](./docs/architecture.png)
+
+## Getting Started
+
+See the documentation [here](https://docs.kscale.dev/docs/actuator-package) for instructions on getting started with this package.
+
+## Build Requirements
+
+### Linux
+This package requires Linux for building due to dependencies on Linux-specific CAN bus libraries.
+
+If you're developing on other platforms, consider using a Linux virtual machine or container for building.
