@@ -182,7 +182,7 @@ class RobstrideMotor:
         """
         self.stop()
         time.sleep(0.1)
-        pkt = encode_frame(build_can_id(COMM_SET_ZERO, self.host_id, self.motor_id), bytes(8))
+        pkt = encode_frame(build_can_id(COMM_SET_ZERO, self.host_id, self.motor_id), bytes([0x01]) + bytes(7))
         self._send(pkt)
         time.sleep(0.15)        # motor writes new zero to non-volatile memory
         return self.read_feedback(timeout)
