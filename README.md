@@ -1,38 +1,24 @@
 # BAM Pipeline — Robstride Motor Identification
 
-Backlash-Aware Model (BAM) identification pipeline for Robstride RS00 actuators, following the [Rhoban methodology](https://rhoban.com). Communicates via raw CAN-over-USB using the CH341 adapter and MIT-mode control frames. Runs motion routines (step, ramp, sine, chirp) and records commanded vs. actual position for offline friction and backlash parameter estimation.
-
----
-
-## What it does
-
-- Sends MIT-mode position commands (Kp/Kd impedance control) at up to 100 Hz
-- Streams motor feedback: angle, velocity, torque, temperature
-- Executes predefined excitation trajectories including a chirp (`A·sin(k·t²)`) for broadband system identification
-- Records all channels to CSV for post-processing and BAM parameter fitting
-- Provides standalone utilities for zeroing and continuous position monitoring
+BAM (Better Actuator Model) data collection pipeline for Robstride RS02 actuators.
+Communicates over CH341 USB-CAN using the raw MIT-mode framing from
+[soccer-firmware/tools/robostride_usb_can](../soccer-firmware/tools/robostride_usb_can).
+Runs the standard Rhoban BAM excitation trajectories and records commanded vs. actual
+position/velocity/torque for offline friction model parameter fitting.
 
 ---
 
 ## Prerequisites
-
-### Hardware
-
-- **USB CAN debugger** — CH341-based USB-to-CAN adapter (e.g. "USB CAN Analyzer")
-- Robstride RS00 actuator with CAN bus wired to the adapter
-
-### Software
 
 **CH341 Linux kernel driver** — install before plugging in the adapter:
 
 ```bash
 git clone https://github.com/WCHSoftGroup/ch341ser_linux
 cd ch341ser_linux
-make
-sudo make install
+make && sudo make install
 ```
 
-After installation the device appears as `/dev/ttyCH341USB0`.
+After installation the adapter appears as `/dev/ttyCH341USB0`.
 
 **Python environment** — activate the included venv:
 
@@ -45,80 +31,141 @@ source .bam_env/bin/activate
 ## Workspace structure
 
 ```
-bam_ws/
+bam_robstride/
 ├── src/
-│   ├── robstride/
-│   │   ├── __init__.py          # Public API (RobstrideMotor, MotorState)
-│   │   ├── motor.py             # High-level motor class (open/enable/set_angle/zero)
-│   │   └── protocol.py          # CAN frame encode/decode, RS00 physical limits
-│   ├── trajectories/
-│   │   ├── sin_time_square.py   # Chirp A·sin(k·t²) — primary BAM excitation
-│   │   ├── sin_sin.py           # Sinusoidal trajectory
-│   │   ├── lift_and_drop.py     # Lift-and-drop routine
-│   │   └── up_and_down.py       # Reciprocal up/down motion
-│   ├── examples/
-│   │   ├── motor_command.py     # Interactive MIT-mode position commands
-│   │   ├── motor_record.py      # Record step/ramp/sine/chirp to CSV
-│   │   ├── motor_read.py        # Raw protocol state reader
-│   │   └── supervisor.py        # Multi-motor supervision demo
-│   ├── read_motor.py            # Continuous position/velocity/torque monitor
-│   └── zero_motor.py            # Set current position as zero reference
-├── params/
-│   └── rs00/                    # Motor parameter files
-├── data_raw/                    # Output directory for recorded CSVs
-├── plot_trajectories.py         # Plot cmd vs actual from CSV files
+│   ├── rs02_can.py              # CAN frame encode/decode (29-bit extended, CH341 AT framing)
+│   ├── rs02_motor.py            # RS02Motor class (MIT mode, enable, goto, sine, …)
+│   ├── cli.py                   # Direct motor control CLI (read, goto, sine, zero, set-id, …)
+│   └── trajectories/
+│       ├── __init__.py          # traj_list dict
+│       ├── base.py              # Trajectory ABC + cubic Hermite spline interpolation
+│       ├── sin_time_square.py   # A·sin(k·t²)  — primary BAM chirp excitation
+│       ├── sin_sin.py           # sin(t)·π/2 + sin(5t)·0.5·sin(2t)
+│       ├── lift_and_drop.py     # Cubic lift to -π/2, then torque release
+│       ├── up_and_down.py       # Cubic lift to π/2, partial descent
+│       └── nothing.py           # Zero torque — baseline / backdrive test
+├── record.py                    # Run any trajectory and record to CSV
+├── plot_trajectories.py         # Plot cmd vs actual from data_raw/
+├── data_raw/                    # Recorded CSVs, organised by trajectory type
+│   ├── sin_time_square/
+│   ├── sin_sin/
+│   ├── lift_and_drop/
+│   ├── up_and_down/
+│   └── nothing/
 └── .bam_env/                    # Python virtual environment
 ```
 
 ---
 
-## Basic usage
+## Quick start
 
-### 1. Zero the motor
-
-```bash
-python src/zero_motor.py --port /dev/ttyCH341USB0 --id 1
-```
-
-### 2. Monitor live feedback
+### 1. Check the motor
 
 ```bash
-python src/read_motor.py --port /dev/ttyCH341USB0 --id 1 --hz 100
+python src/cli.py read 1
+python src/cli.py init 1
 ```
 
-### 3. Run the chirp identification trajectory
+### 2. Zero the motor
 
 ```bash
-python src/trajectories/sin_time_square.py --port /dev/ttyCH341USB0 --id 1
+python src/cli.py zero 1 --rate 0.3 --set-mech-zero
 ```
 
-Output CSV is written to `data_raw/` with columns: `t_s, cmd_rad, act_rad, err_rad, vel_rads, torque_nm, temp_c`.
-
-### 4. Run other excitation routines
+### 3. Run an identification trajectory
 
 ```bash
-python src/examples/motor_record.py --routine sine  --freq 0.5 --duration 30 --kp 30 --kd 2
-python src/examples/motor_record.py --routine chirp --duration 30 --kp 30 --kd 2
-python src/examples/motor_record.py --routine step  --duration 20 --kp 50 --kd 3
+# Primary BAM chirp (30 s, sweeps 0 → ~0.95 Hz)
+python record.py sin_time_square
+
+# Multi-frequency sine (30 s)
+python record.py sin_sin
+
+# Lift and drop — captures free-fall inertia/friction
+python record.py lift_and_drop
+
+# Controlled up-and-down — gravity loading both ways
+python record.py up_and_down
+
+# Zero-torque baseline
+python record.py nothing
 ```
 
-### 5. Plot results
+All flags:
 
 ```bash
-python plot_trajectories.py
+python record.py sin_time_square \
+    --port /dev/ttyCH341USB0 \
+    --id 1 \
+    --kp 30 --kd 2 \
+    --hz 100 \
+    --duration 30 \
+    --amp 1.0 --k 0.1
 ```
 
-Reads all `sin_time_square_*.csv` files in the working directory and saves `trajectories.png`.
+### 4. Plot recordings
+
+```bash
+python plot_trajectories.py                          # all recordings
+python plot_trajectories.py --traj sin_time_square  # one type only
+python plot_trajectories.py --save my_run.png
+```
 
 ---
 
-## CAN protocol notes
+## Trajectory reference
 
-Communication is CH341 serial at **921600 baud**. Frames use the Robstride v2 extended-ID format:
+| Name | Formula | Duration | Notes |
+|---|---|---|---|
+| `sin_time_square` | A·sin(k·t²) | 30 s | Chirp — freq grows linearly with time |
+| `sin_sin` | sin(t)·π/2 + sin(5t)·0.5·sin(2t) | 30 s | Multi-frequency, non-periodic |
+| `lift_and_drop` | Cubic to −π/2, then torque off | 6 s | Free-fall from t=2 s |
+| `up_and_down` | Cubic: 0→π/2→0.8·π/2 | 6 s | Always torqued |
+| `nothing` | 0, torque off | 6 s | Passive / backdrive baseline |
 
-| Direction | CAN ID bits | Payload |
-|-----------|-------------|---------|
-| TX | `[28:24]` comm_type, `[23:8]` host/torque, `[7:0]` motor_id | 8-byte control data |
-| RX | `[28:24]` comm_type, `[23:16]` mode/fault, `[15:8]` motor_id, `[7:0]` host_id | 8-byte feedback |
+---
 
-RS00 physical limits: ±4π rad, ±33 rad/s, ±14 Nm, Kp 0–500, Kd 0–5.
+## Data format
+
+Each recording is a CSV saved to `data_raw/<traj_name>/<timestamp>_id<N>_kp<kp>_kd<kd>.csv`.
+
+| Column | Unit | Description |
+|---|---|---|
+| `t_s` | s | Elapsed time |
+| `cmd_rad` | rad | Commanded position |
+| `act_rad` | rad | Measured position |
+| `err_rad` | rad | cmd − act |
+| `vel_rads` | rad/s | Measured velocity |
+| `torque_nm` | Nm | Measured torque |
+| `temp_c` | °C | Motor temperature |
+
+---
+
+## Direct motor control (cli.py)
+
+```bash
+python src/cli.py read 1                          # single feedback read
+python src/cli.py read-loop 1 --hz 50             # continuous poll
+python src/cli.py goto 1 1.57 0.3                 # ramp to position
+python src/cli.py sine 1 --amp 0.2 --freq 0.25   # sine sweep
+python src/cli.py zero 1 --rate 0.3               # slow ramp to zero
+python src/cli.py set-zero 1                      # set mech zero at current pos
+python src/cli.py set-id 1 2                      # change CAN ID
+python src/cli.py off 1                           # disable output
+```
+
+Port defaults to `/dev/ttyCH341USB0` or the `RS02_PORT` environment variable.
+
+---
+
+## CAN protocol
+
+Communication is CH341 serial at **921600 baud**. Frames use the Robstride RS02
+extended-ID format:
+
+| Direction | CAN ID | Payload |
+|---|---|---|
+| TX | bits[28:24]=comm_type, [23:8]=torque_ff, [7:0]=motor_id | 8 B: pos[2] vel[2] kp[2] kd[2] |
+| RX | bits[28:24]=COMM_FEEDBACK, [15:14]=mode, [13:8]=faults, [7:0]=motor_id | 8 B: pos[2] vel[2] torq[2] temp[2] |
+
+RS02 physical limits: ±12.57 rad, ±44 rad/s, ±17 Nm, Kp 0–500, Kd 0–5.
